@@ -145,6 +145,139 @@ class FilesController {
     // send over the wire
     res.status(201).json(toSend);
   }
+
+  /**
+   * getShow - retrieves the file document based on the ID.
+   * @req {Request}: the Request object.
+   * @resp (Response): the Response object.
+   */
+  static async getShow(req, res) {
+    // TODO: eliminate repititive code; from here...
+    const token = req.get('X-Token');
+    if (!token) {
+      // no token
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user ID from Redis with token
+    const key = `auth_${token}`;
+    const userId = await redisClient.get(key);
+    if (userId == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user document object from MongoDB
+    const objID = ObjectId(userId);
+    const user = await dbClient.findUser({ _id: objID });
+    if (user == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    // ...to around here
+
+    // user found; find linked file document
+    let fileId = req.params.id;
+    const errMessage = { error: 'Unauthorized' };
+    if (!fileId) {
+      res.status(401).json(errMessage);
+      return;
+    }
+    // verify id is valid ObjectId
+    try {
+      fileId = ObjectId(fileId);
+    } catch (err) {
+      res.status(401).json(errMessage);
+      return;
+    }
+    // valid ObjectId; search
+    /**
+     * for finding a specific doc
+     */
+    const filterDoc = { _id: fileId, userId: user._id };
+    let fileDoc = await dbClient.findFile(filterDoc);
+    if (!fileDoc) {
+      // no matching file doc found
+      res.status(404).json({ error: 'Not found' });
+    }
+
+    // file doc found; return it
+    // TODO: possible output formatting; check intranet exam.
+    fileDoc = { id: fileDoc._id, ...fileDoc }; // format output first
+    delete fileDoc._id;
+    res.json(fileDoc);
+  }
+
+  /**
+   * getIndex - return page of files matching the user ID and specified parent ID.
+   */
+  static async getIndex(req, res) {
+    // TODO: eliminate repititive code; from here...
+    const token = req.get('X-Token');
+    if (!token) {
+      // no token
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user ID from Redis with token
+    const key = `auth_${token}`;
+    const userId = await redisClient.get(key);
+    if (userId == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user document object from MongoDB
+    const objID = ObjectId(userId);
+    const user = await dbClient.findUser({ _id: objID });
+    if (user == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    // ...to around here
+
+    // get query parameters
+    // console.log(Object.entries(req)); // SCAFF
+    let { page } = req.query;
+    if (!page) {
+      // no page number provided
+      page = -1;
+    } else {
+      // TODO: validate that `page` is a numeric string
+      page = Number(page);
+    }
+    let { parentId } = req.query;
+    if (parentId) {
+      // TODO: wrap in try/catch block; ObjectId throws
+      parentId = ObjectId(parentId);
+    } else {
+      // none provided; use default
+      parentId = '0';
+    }
+
+    // user validated; get parent files for this user
+    const filterDoc = { parentId, userId: user._id };
+    const files = await dbClient.getPaginatedFiles(20/* page size */, page, filterDoc); // an array
+    // console.log(Object.entries(files)); // SCAFF
+    const filesToSend = [];
+    for (let file of files) {
+      if (file._id) {
+        // rename _id to id
+        file = { id: file._id, ...file };
+        delete file._id;
+        filesToSend.push(file);
+      }
+    }
+
+    // return list
+    res.json(filesToSend);
+  }
 }
 
 export default FilesController;
