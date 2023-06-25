@@ -16,12 +16,14 @@ class FilesController {
 
     // retrieve the user ID from Redis with token
     const key = `auth_${token}`;
-    const userId = await redisClient.get(key);
+    let userId = await redisClient.get(key);
     if (userId == null) {
       // no user token found in Redis
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
+    // user ID retrieved as str 4rm redis; convert to ObjectId
+    userId = ObjectId(userId);
 
     // retrieve the user document object from MongoDB
     const objID = ObjectId(userId);
