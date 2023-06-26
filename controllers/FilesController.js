@@ -1,6 +1,7 @@
 import { Buffer } from 'buffer';
 import fs from 'fs';
 import { v4 } from 'uuid';
+import { contentType } from 'mime-types';
 import { ObjectId } from 'mongodb';
 import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
@@ -377,6 +378,76 @@ class FilesController {
     // return the updated file document
     const toSend = dbClient.formatFileDoc(fileDoc);
     res.json(toSend);
+  }
+
+  /**
+   * getFile - returns the content of a specific file document
+   */
+  static async getFile(req, res) {
+    // TODO: eliminate repititive code; from here...
+    const token = req.get('X-Token');
+    if (!token) {
+      // no token
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user ID from Redis with token
+    const key = `auth_${token}`;
+    const userId = await redisClient.get(key);
+    if (userId == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user document object from MongoDB
+    const objID = ObjectId(userId);
+    const user = await dbClient.findUser({ _id: objID });
+    if (user == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    // ...to around here
+
+    // get uri id parameter
+    let { id } = req.params;
+    id = ObjectId(id); // TODO: try/catch; ObjectId throws
+
+    // get file with given id and userId
+    const filterDoc = { _id: id, userId: user._id };
+    const fileDoc = await dbClient.findFile(filterDoc);
+    if (!fileDoc || fileDoc.isPublic === false) {
+      // no match found, or not public yet
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    // ensure fileDoc is not for a folder
+    if (fileDoc.type === 'folder') {
+      res.status(400).json({ error: 'A folder doesn\'t have content' });
+      return;
+    }
+
+    // fileDoc is for a file [or image?]
+    // retrieve file contents from file system
+    // TODO: this will work for text files; images?
+    let fileContent;
+    try {
+      fileContent = await fs.promises.readFile(fileDoc.localPath);
+      fileContent = fileContent.toString();
+    } catch (err) {
+      // ERROR: ENOENT: no such file or directory
+      // file not present locally
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    // file content retrieved; return content with correct mime-type
+    const mimeType = contentType(fileDoc.name); // full header
+    res.set('Content-Type', mimeType);
+    res.send(fileContent);
   }
 }
 
