@@ -308,7 +308,8 @@ class FilesController {
     // ...to around here
 
     // get uri id parameter
-    const { id } = req.params;
+    let { id } = req.params;
+    id = ObjectId(id); // TODO: try/catch; ObjectId throws
 
     // get file with given id and userId
     const filterDoc = { _id: id, userId: user._id };
@@ -324,7 +325,57 @@ class FilesController {
     await dbClient.updateFileDoc(filterDoc, fileDoc);
 
     // return the updated file document
-    const toSend = dbClient.formatDoc(fileDoc);
+    const toSend = dbClient.formatFileDoc(fileDoc);
+    res.json(toSend);
+  }
+
+  static async putUnpublish(req, res) {
+    // TODO: eliminate repititive code; from here...
+    const token = req.get('X-Token');
+    if (!token) {
+      // no token
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user ID from Redis with token
+    const key = `auth_${token}`;
+    const userId = await redisClient.get(key);
+    if (userId == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    // retrieve the user document object from MongoDB
+    const objID = ObjectId(userId);
+    const user = await dbClient.findUser({ _id: objID });
+    if (user == null) {
+      // no user token found in Redis
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    // ...to around here
+
+    // get uri id parameter
+    let { id } = req.params;
+    id = ObjectId(id); // TODO: try/catch; ObjectId throws
+
+    // get file with given id and userId
+    const filterDoc = { _id: id, userId: user._id };
+    const fileDoc = await dbClient.findFile(filterDoc);
+    if (!fileDoc) {
+      // no match found
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+
+    // edit and update file document
+    fileDoc.isPublic = false;
+    await dbClient.updateFileDoc(filterDoc, fileDoc);
+
+    // return the updated file document
+    const toSend = dbClient.formatFileDoc(fileDoc);
     res.json(toSend);
   }
 }

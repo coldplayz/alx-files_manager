@@ -167,7 +167,7 @@ class DBClient {
    * formatFileDoc - renames the _id field of @doc to id.
    * @doc: the file document to format for sending.
    */
-  formatDoc(doc) {
+  formatFileDoc(doc) {
     this.formatDocCalls = this.formatDocCalls ? this.formatDocCalls + 1 : 1;
     const fileDoc = { id: doc._id, ...doc };
     delete fileDoc._id;
@@ -175,12 +175,12 @@ class DBClient {
   }
 
   /**
-   * updateFile - updates a file document.
+   * updateFileDoc - updates a file document.
    * Args: filterObj, updateDoc
    * @filterObj: the filter criteria
    * @updateDoc: the document with update data to save
    */
-  async updateFile(filterObj, updateDoc) {
+  async updateFileDoc(filterObj, updateDoc) {
     const client = await this.connection;
 
     const coll = client.db(this.db).collection('files');
