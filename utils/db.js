@@ -102,6 +102,94 @@ class DBClient {
 
     return coll.findOne(filterObj); // doc object or null
   }
+
+  /**
+   * getPaginatedFiles - returns @size files max for @pageNumber, using @filterObj
+   * Args: size/limit, pageNumber, filterObj
+   * @size: max number of items per page.
+   * @pageNumber {Integer}: the page to return. 0-based.
+   */
+  async getPaginatedFiles(size, pageNumber, filterObj) {
+    const client = await this.connection;
+
+    const coll = client.db(this.db).collection('files');
+
+    // console.log(size, pageNumber, filterObj); // SCAFF
+
+    // calculate skip number
+    const skips = size * pageNumber;
+
+    const filterObjCopy = { ...filterObj };
+
+    if (pageNumber === -1) {
+      // no pagination
+      if (filterObjCopy.parentId === '0') {
+        // return all documents [in root, recursively]
+        delete filterObjCopy.parentId;
+        return coll.aggregate(
+          { $match: filterObjCopy },
+          null, // callback arg; needed to use prior args as pipeline
+        ).toArray();
+      }
+      // else parentId provided; return all matching documents
+      return coll.aggregate(
+        { $match: filterObj },
+        null, // callback arg; needed to use prior args as pipeline
+      ).toArray();
+    }
+
+    if (pageNumber !== -1) {
+      // pagination
+      if (filterObjCopy.parentId === '0') {
+        // return all documents [in root] paginated
+        delete filterObjCopy.parentId;
+        return coll.aggregate(
+          { $match: filterObjCopy },
+          { $sort: { _id: 1 } }, // ascending order
+          { $skip: skips },
+          { $limit: size },
+          null, // callback arg; needed to use prior args as pipeline
+        ).toArray();
+      }
+    }
+
+    // pageNumber provided, and non-root parentId also; paginate
+    return coll.aggregate(
+      { $match: filterObj },
+      { $sort: { _id: 1 } }, // ascending order
+      { $skip: skips },
+      { $limit: size },
+      null, // callback arg; needed to use prior args as pipeline
+    ).toArray();
+  }
+
+  /**
+   * formatFileDoc - renames the _id field of @doc to id.
+   * @doc: the file document to format for sending.
+   */
+  formatDoc(doc) {
+    this.formatDocCalls = this.formatDocCalls ? this.formatDocCalls + 1 : 1;
+    const fileDoc = { id: doc._id, ...doc };
+    delete fileDoc._id;
+    return fileDoc;
+  }
+
+  /**
+   * updateFile - updates a file document.
+   * Args: filterObj, updateDoc
+   * @filterObj: the filter criteria
+   * @updateDoc: the document with update data to save
+   */
+  async updateFile(filterObj, updateDoc) {
+    const client = await this.connection;
+
+    const coll = client.db(this.db).collection('files');
+
+    // if updateDoc is not using update operators (e.g. $set)
+    // ...the entire document matching the _id will be
+    // ...replaced by updateDoc.
+    await coll.update(filterObj, updateDoc);
+  }
 }
 
 const dbClient = new DBClient();
