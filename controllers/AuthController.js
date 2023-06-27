@@ -1,110 +1,73 @@
-// Authentication controller
-import buffer from 'buffer';
+import { v4 as uuidv4 } from 'uuid';
 import sha1 from 'sha1';
-import { ObjectId } from 'mongodb';
-import { v4 } from 'uuid';
-import dbClient from '../utils/db';
 import redisClient from '../utils/redis';
+import userUtils from '../utils/user';
 
-// const uuid = require('uuid');
-
-// console.log('#####', Object.entries(uuid)); // SCAFF
 class AuthController {
   /**
-   * Parse Authorization header and return a 24-hour token for a valid user.
+   * Should sign-in the user by generating a new authentication token
+   *
+   * By using the header Authorization and the technique of the Basic auth
+   * (Base64 of the <email>:<password>), find the user associate to this email
+   * and with this password (reminder: we are storing the SHA1 of the password)
+   * If no user has been found, return an error Unauthorized with a status code 401
+   * Otherwise:
+   * Generate a random string (using uuidv4) as token
+   * Create a key: auth_<token>
+   * Use this key for storing in Redis (by using the redisClient create previously)
+   * the user ID for 24 hours
+   * Return this token: { "token": "155342df-2399-41da-9e8c-458b6ac52a0c" }
+   * with a status code 200
    */
-  static async getConnect(req, res) {
-    // get and parse the Basic Authorization header
-    const authHeader = req.get('Authorization');
-    if (!authHeader) {
-      // no authorization value
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+  static async getConnect(request, response) {
+    const Authorization = request.header('Authorization') || '';
 
-    const base64Value = authHeader.split(' ')[1];
-    // console.log('#######', base64Value, Object.entries(Buffer)); // SCAFF
+    const credentials = Authorization.split(' ')[1];
 
-    // decode the base64 value to ascii
-    const asciiValue = buffer.Buffer.from(base64Value, 'base64'/* encoding of first arg */).toString('ascii'/* default */);
-    const [email, password] = asciiValue.split(':');
+    if (!credentials) { return response.status(401).send({ error: 'Unauthorized' }); }
 
-    // find user with matching credentials, if any
-    const sha1Pwd = sha1(password);
-    const filterObj = { email, password: sha1Pwd };
-    const user = await dbClient.findUser(filterObj);
+    const decodedCredentials = Buffer.from(credentials, 'base64').toString(
+      'utf-8',
+    );
 
-    if (user == null) {
-      // no user found
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+    const [email, password] = decodedCredentials.split(':');
 
-    // console.log('#####', Object.entries(uuid)); // SCAFF
-    // user found; create a session for them
-    const token = v4();
+    if (!email || !password) { return response.status(401).send({ error: 'Unauthorized' }); }
+
+    const sha1Password = sha1(password);
+
+    const user = await userUtils.getUser({
+      email,
+      password: sha1Password,
+    });
+
+    if (!user) return response.status(401).send({ error: 'Unauthorized' });
+
+    const token = uuidv4();
     const key = `auth_${token}`;
+    const hoursForExpiration = 24;
 
-    // store user ID for 24 hours in Redis
-    await redisClient.set(key, user._id.toString(), 86400);
+    await redisClient.set(key, user._id.toString(), hoursForExpiration * 3600);
 
-    res.json({ token });
+    return response.status(200).send({ token });
   }
 
   /**
-   * sign out a user based on X-Token header value
+   * Should sign-out the user based on the token
+   *
+   * Retrieve the user based on the token:
+   * If not found, return an error Unauthorized with a status code 401
+   * Otherwise, delete the token in Redis and return nothing with a
+   * status code 204
    */
-  static async getDisconnect(req, res) {
-    const token = req.get('X-Token');
-    if (!token) {
-      // no token
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+  static async getDisconnect(request, response) {
+    const { userId, key } = await userUtils.getUserIdAndKey(request);
 
-    // retrieve the user ID from Redis with token
-    const key = `auth_${token}`;
-    const userId = await redisClient.get(key);
-    if (userId == null) {
-      // no user token found in Redis
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
+    if (!userId) return response.status(401).send({ error: 'Unauthorized' });
 
-    // user found in Redis; delete its token
     await redisClient.del(key);
-    res.status(204).end();
-  }
 
-  /**
-   * return a user object with valid token
-   */
-  static async getMe(req, res) {
-    const token = req.get('X-Token');
-    if (!token) {
-      // no token
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-
-    // retrieve the user ID from Redis with token
-    const key = `auth_${token}`;
-    const userId = await redisClient.get(key);
-    if (userId == null) {
-      // no user token found in Redis
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-
-    // retrieve the user document object from MongoDB
-    const objID = ObjectId(userId);
-    const user = await dbClient.findUser({ _id: objID });
-    if (user == null) {
-      // no user token found in Redis
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    res.json({ id: userId, email: user.email });
+    return response.status(204).send();
   }
 }
 
